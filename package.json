@@ -26,6 +26,15 @@
     "typescript"
   ],
   "license": "MIT",
+  "author": "Clemens Helm <clemens@helmcraft.com> (https://heypinchy.com)",
+  "homepage": "https://github.com/heypinchy/odoo-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/heypinchy/odoo-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/heypinchy/odoo-node/issues"
+  },
   "devDependencies": {
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
