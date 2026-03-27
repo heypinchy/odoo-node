@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Typed Odoo JSON-RPC client for Node.js",
   "type": "module",
+  "packageManager": "pnpm@10.29.3",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
