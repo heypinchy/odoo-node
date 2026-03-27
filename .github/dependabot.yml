@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      frequency: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      dev-deps:
+        dependency-type: development
+        update-types: [minor, patch]
+    reviewers: [clemenshelm]
+    labels: [dependencies]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      frequency: weekly
+      day: monday
+    reviewers: [clemenshelm]
+    labels: [ci]

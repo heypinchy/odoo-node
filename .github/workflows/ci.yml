@@ -1,0 +1,50 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Verify CJS export
+        run: node -e "const m = require('./dist/index.cjs'); if (typeof m.OdooClient !== 'function') throw new Error('CJS missing')"
+      - name: Verify ESM export
+        run: node --input-type=module -e "import { OdooClient } from './dist/index.js'; if (typeof OdooClient !== 'function') throw new Error('ESM missing')"
+      - name: Package size check
+        if: matrix.node-version == 22
+        run: |
+          pnpm pack
+          SIZE=$(wc -c < odoo-node-*.tgz)
+          echo "Package size: $SIZE bytes"
+          if [ "$SIZE" -gt 51200 ]; then echo "FAIL: package > 50KB"; exit 1; fi
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod || true
