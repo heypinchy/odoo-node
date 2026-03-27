@@ -28,12 +28,12 @@ export class OdooClient {
   }
 
   static async authenticate(auth: OdooAuthConfig): Promise<number> {
-    const uid = await jsonRpc<number | false>(
-      auth.url,
-      "common",
-      "authenticate",
-      [auth.db, auth.login, auth.apiKey, {}],
-    );
+    const uid = await jsonRpc<number | false>(auth.url, "common", "authenticate", [
+      auth.db,
+      auth.login,
+      auth.apiKey,
+      {},
+    ]);
     if (uid === false) {
       throw new OdooError("Authentication failed");
     }
@@ -55,12 +55,9 @@ export class OdooClient {
   }
 
   async models(): Promise<OdooModel[]> {
-    return this.execute<OdooModel[]>(
-      "ir.model",
-      "search_read",
-      [[]],
-      { fields: ["model", "name"] },
-    );
+    return this.execute<OdooModel[]>("ir.model", "search_read", [[]], {
+      fields: ["model", "name"],
+    });
   }
 
   async fields(model: string): Promise<OdooField[]> {
@@ -69,14 +66,7 @@ export class OdooClient {
       "fields_get",
       [],
       {
-        attributes: [
-          "string",
-          "type",
-          "required",
-          "readonly",
-          "relation",
-          "selection",
-        ],
+        attributes: ["string", "type", "required", "readonly", "relation", "selection"],
       },
     );
 
@@ -118,35 +108,23 @@ export class OdooClient {
     groupby: string[],
     options?: ReadGroupOptions,
   ): Promise<ReadGroupResult> {
-    const groups = await this.execute<Record<string, unknown>[]>(
-      model,
-      "read_group",
-      [domain],
-      {
-        fields,
-        groupby,
-        orderby: options?.orderby,
-        limit: options?.limit,
-        offset: options?.offset,
-        lazy: options?.lazy,
-      },
-    );
+    const groups = await this.execute<Record<string, unknown>[]>(model, "read_group", [domain], {
+      fields,
+      groupby,
+      orderby: options?.orderby,
+      limit: options?.limit,
+      offset: options?.offset,
+      lazy: options?.lazy,
+    });
 
     return { groups };
   }
 
-  async create(
-    model: string,
-    values: Record<string, unknown>,
-  ): Promise<number> {
+  async create(model: string, values: Record<string, unknown>): Promise<number> {
     return this.execute<number>(model, "create", [values], {});
   }
 
-  async write(
-    model: string,
-    ids: number[],
-    values: Record<string, unknown>,
-  ): Promise<boolean> {
+  async write(model: string, ids: number[], values: Record<string, unknown>): Promise<boolean> {
     return this.execute<boolean>(model, "write", [ids, values], {});
   }
 

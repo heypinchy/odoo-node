@@ -120,14 +120,7 @@ describe("OdooClient", () => {
           "fields_get",
           [],
           {
-            attributes: [
-              "string",
-              "type",
-              "required",
-              "readonly",
-              "relation",
-              "selection",
-            ],
+            attributes: ["string", "type", "required", "readonly", "relation", "selection"],
           },
         ],
       );
@@ -157,9 +150,7 @@ describe("OdooClient", () => {
         .mockResolvedValueOnce(42) // search_count
         .mockResolvedValueOnce([{ id: 1, name: "Test" }]); // search_read
 
-      const result = await client.searchRead("res.partner", [
-        ["is_company", "=", true],
-      ]);
+      const result = await client.searchRead("res.partner", [["is_company", "=", true]]);
 
       expect(mockedJsonRpc).toHaveBeenCalledTimes(2);
 
@@ -204,15 +195,14 @@ describe("OdooClient", () => {
     });
 
     it("uses custom options when provided", async () => {
-      mockedJsonRpc
-        .mockResolvedValueOnce(100)
-        .mockResolvedValueOnce([{ id: 1, name: "A" }]);
+      mockedJsonRpc.mockResolvedValueOnce(100).mockResolvedValueOnce([{ id: 1, name: "A" }]);
 
-      await client.searchRead(
-        "res.partner",
-        [],
-        { fields: ["name"], limit: 10, offset: 20, order: "name asc" },
-      );
+      await client.searchRead("res.partner", [], {
+        fields: ["name"],
+        limit: 10,
+        offset: 20,
+        order: "name asc",
+      });
 
       expect(mockedJsonRpc).toHaveBeenCalledWith(
         "https://odoo.example.com",
@@ -231,9 +221,7 @@ describe("OdooClient", () => {
     });
 
     it("defaults limit to 100", async () => {
-      mockedJsonRpc
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce([]);
+      mockedJsonRpc.mockResolvedValueOnce(0).mockResolvedValueOnce([]);
 
       const result = await client.searchRead("res.partner", []);
       expect(result.limit).toBe(100);
@@ -244,33 +232,21 @@ describe("OdooClient", () => {
     it("returns count", async () => {
       mockedJsonRpc.mockResolvedValue(15);
 
-      const result = await client.searchCount("res.partner", [
-        ["active", "=", true],
-      ]);
+      const result = await client.searchCount("res.partner", [["active", "=", true]]);
 
       expect(result).toBe(15);
       expect(mockedJsonRpc).toHaveBeenCalledWith(
         "https://odoo.example.com",
         "object",
         "execute_kw",
-        [
-          "testdb",
-          2,
-          "test-api-key",
-          "res.partner",
-          "search_count",
-          [[["active", "=", true]]],
-          {},
-        ],
+        ["testdb", 2, "test-api-key", "res.partner", "search_count", [[["active", "=", true]]], {}],
       );
     });
   });
 
   describe("readGroup", () => {
     it("calls read_group with correct params", async () => {
-      mockedJsonRpc.mockResolvedValue([
-        { partner_id: [1, "Test"], partner_id_count: 5 },
-      ]);
+      mockedJsonRpc.mockResolvedValue([{ partner_id: [1, "Test"], partner_id_count: 5 }]);
 
       const result = await client.readGroup(
         "sale.order",
@@ -309,13 +285,12 @@ describe("OdooClient", () => {
     it("passes options to read_group", async () => {
       mockedJsonRpc.mockResolvedValue([]);
 
-      await client.readGroup(
-        "sale.order",
-        [],
-        ["amount_total:sum"],
-        ["partner_id"],
-        { orderby: "partner_id asc", limit: 5, offset: 0, lazy: false },
-      );
+      await client.readGroup("sale.order", [], ["amount_total:sum"], ["partner_id"], {
+        orderby: "partner_id asc",
+        limit: 5,
+        offset: 0,
+        lazy: false,
+      });
 
       expect(mockedJsonRpc).toHaveBeenCalledWith(
         "https://odoo.example.com",
@@ -352,15 +327,7 @@ describe("OdooClient", () => {
         "https://odoo.example.com",
         "object",
         "execute_kw",
-        [
-          "testdb",
-          2,
-          "test-api-key",
-          "res.partner",
-          "create",
-          [{ name: "Acme Corp" }],
-          {},
-        ],
+        ["testdb", 2, "test-api-key", "res.partner", "create", [{ name: "Acme Corp" }], {}],
       );
     });
   });
@@ -378,15 +345,7 @@ describe("OdooClient", () => {
         "https://odoo.example.com",
         "object",
         "execute_kw",
-        [
-          "testdb",
-          2,
-          "test-api-key",
-          "res.partner",
-          "write",
-          [[1, 2], { name: "Updated" }],
-          {},
-        ],
+        ["testdb", 2, "test-api-key", "res.partner", "write", [[1, 2], { name: "Updated" }], {}],
       );
     });
   });
@@ -402,15 +361,7 @@ describe("OdooClient", () => {
         "https://odoo.example.com",
         "object",
         "execute_kw",
-        [
-          "testdb",
-          2,
-          "test-api-key",
-          "res.partner",
-          "unlink",
-          [[1]],
-          {},
-        ],
+        ["testdb", 2, "test-api-key", "res.partner", "unlink", [[1]], {}],
       );
     });
   });

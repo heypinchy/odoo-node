@@ -37,16 +37,11 @@ export async function jsonRpc<T>(
       body: JSON.stringify(payload),
     });
   } catch (err) {
-    throw new OdooError(
-      err instanceof Error ? err.message : "Network error",
-    );
+    throw new OdooError(err instanceof Error ? err.message : "Network error");
   }
 
   if (!response.ok) {
-    throw new OdooError(
-      `HTTP ${response.status}: ${response.statusText}`,
-      response.status,
-    );
+    throw new OdooError(`HTTP ${response.status}: ${response.statusText}`, response.status);
   }
 
   const json = (await response.json()) as JsonRpcResponse<T>;

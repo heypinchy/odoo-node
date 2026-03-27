@@ -67,11 +67,7 @@ describe("types", () => {
   });
 
   it("OdooDomain supports tuples and logic operators", () => {
-    const domain: OdooDomain = [
-      "&",
-      ["name", "=", "test"],
-      ["active", "=", true],
-    ];
+    const domain: OdooDomain = ["&", ["name", "=", "test"], ["active", "=", true]];
     expectTypeOf(domain).toMatchTypeOf<OdooDomain>();
   });
 
@@ -135,8 +131,7 @@ describe("types", () => {
     };
     expectTypeOf(success.result).toEqualTypeOf<number | undefined>();
     expectTypeOf(failure.error).toMatchTypeOf<
-      | { code: number; message: string; data: { message: string } }
-      | undefined
+      { code: number; message: string; data: { message: string } } | undefined
     >();
   });
 });
