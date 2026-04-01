@@ -365,6 +365,38 @@ describe("OdooClient", () => {
       );
     });
   });
+
+  describe("checkAccessRights", () => {
+    it("calls check_access_rights with raise_exception false", async () => {
+      mockedJsonRpc.mockResolvedValue(true);
+
+      const result = await client.checkAccessRights("sale.order", "read");
+
+      expect(mockedJsonRpc).toHaveBeenCalledWith(
+        "https://odoo.example.com",
+        "object",
+        "execute_kw",
+        [
+          "testdb",
+          2,
+          "test-api-key",
+          "sale.order",
+          "check_access_rights",
+          ["read"],
+          { raise_exception: false },
+        ],
+      );
+      expect(result).toBe(true);
+    });
+
+    it("returns false when user lacks permission", async () => {
+      mockedJsonRpc.mockResolvedValue(false);
+
+      const result = await client.checkAccessRights("sale.order", "unlink");
+
+      expect(result).toBe(false);
+    });
+  });
 });
 
 describe("OdooClient.authenticate", () => {

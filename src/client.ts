@@ -132,6 +132,15 @@ export class OdooClient {
     return this.execute<boolean>(model, "unlink", [ids], {});
   }
 
+  async checkAccessRights(
+    model: string,
+    operation: "read" | "create" | "write" | "unlink",
+  ): Promise<boolean> {
+    return this.execute<boolean>(model, "check_access_rights", [operation], {
+      raise_exception: false,
+    });
+  }
+
   private execute<T>(
     model: string,
     method: string,
