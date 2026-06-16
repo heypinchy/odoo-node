@@ -141,6 +141,23 @@ export class OdooClient {
     });
   }
 
+  /**
+   * Invoke an arbitrary model method via `execute_kw`. This is the generic
+   * escape hatch behind the typed CRUD helpers — use it for record methods
+   * that have no dedicated wrapper (e.g. `mail.activity.action_feedback`).
+   * `args` is the positional argument list; for a method that operates on a
+   * recordset, its first element is the list of record ids. `kwargs` carries
+   * keyword arguments.
+   */
+  async callMethod<T = unknown>(
+    model: string,
+    method: string,
+    args: unknown[] = [],
+    kwargs: Record<string, unknown> = {},
+  ): Promise<T> {
+    return this.execute<T>(model, method, args, kwargs);
+  }
+
   private execute<T>(
     model: string,
     method: string,

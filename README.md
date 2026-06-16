@@ -71,6 +71,10 @@ Create a client. Config: `{ url, db, uid, apiKey }`.
 - `write(model, ids, values)` — Update records.
 - `unlink(model, ids)` — Delete records.
 
+### Methods
+
+- `callMethod(model, method, args?, kwargs?)` — Invoke an arbitrary model method via `execute_kw`. The generic escape hatch behind the typed helpers, for record methods without a dedicated wrapper (e.g. `client.callMethod("mail.activity", "action_feedback", [[id]], { feedback: "Done" })`). For methods that operate on a recordset, the first element of `args` is the list of record ids.
+
 ### Domain Filters
 
 Standard Odoo domain syntax: `[["field", "operator", value]]`

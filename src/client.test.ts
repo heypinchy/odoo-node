@@ -397,6 +397,45 @@ describe("OdooClient", () => {
       expect(result).toBe(false);
     });
   });
+
+  describe("callMethod", () => {
+    it("invokes an arbitrary model method via execute_kw with positional args and kwargs", async () => {
+      mockedJsonRpc.mockResolvedValue(true);
+
+      const result = await client.callMethod("mail.activity", "action_feedback", [[5]], {
+        feedback: "Done",
+      });
+
+      expect(result).toBe(true);
+      expect(mockedJsonRpc).toHaveBeenCalledWith(
+        "https://odoo.example.com",
+        "object",
+        "execute_kw",
+        [
+          "testdb",
+          2,
+          "test-api-key",
+          "mail.activity",
+          "action_feedback",
+          [[5]],
+          { feedback: "Done" },
+        ],
+      );
+    });
+
+    it("defaults args and kwargs to empty", async () => {
+      mockedJsonRpc.mockResolvedValue(1);
+
+      await client.callMethod("crm.lead", "some_method");
+
+      expect(mockedJsonRpc).toHaveBeenCalledWith(
+        "https://odoo.example.com",
+        "object",
+        "execute_kw",
+        ["testdb", 2, "test-api-key", "crm.lead", "some_method", [], {}],
+      );
+    });
+  });
 });
 
 describe("OdooClient.authenticate", () => {
