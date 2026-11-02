@@ -83,6 +83,11 @@ Operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`, `like`, `ilike`
 
 Logic: `&` (AND, default), `|` (OR), `!` (NOT) — Polish notation.
 
+## Security
+
+- **Redirects are refused, never followed.** If the Odoo URL answers with a 3xx, the call fails with `Odoo answered with a redirect (HTTP 307); odoo-node does not follow redirects. Use the address Odoo is actually served from.` and the redirect target receives no request. If you validate the Odoo URL before connecting (for example against SSRF rules that refuse loopback, link-local, or cloud-metadata addresses), that validation stays meaningful: a redirect cannot hand the request — and, for 307/308, the POST body with the API key — to an address you never checked. Odoo's JSON-RPC endpoint does not redirect; if yours does (e.g. `http://` → `https://`), configure the address it is actually served from.
+- **Response bodies stay out of error messages.** An answer that is not a JSON-RPC envelope (an HTML login page, a proxy error, plain text) is reported as `Response is not JSON-RPC (HTTP <status>, <content type>)`, without quoting the body. Error messages from a valid JSON-RPC error payload are Odoo's own message, unchanged.
+
 ## Compatibility
 
 Works with Odoo 14+ (Community and Enterprise). Uses JSON-RPC with API key authentication.
