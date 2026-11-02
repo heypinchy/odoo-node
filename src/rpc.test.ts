@@ -225,6 +225,67 @@ describe("jsonRpc against a real HTTP server", () => {
     await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBe(7);
   });
 
+  // Odoo 14–19 build every JSON-RPC answer as {"jsonrpc": "2.0", "id": …} and add "result" only
+  // when the method returned something other than None (15.0 `_json_response`, 16.0+
+  // `JsonRPCDispatcher._response`). So a method that returns None — account.move.line.reconcile,
+  // or account.move.js_assign_outstanding_line in Odoo 19 — answers with no "result" key at all,
+  // after its write has committed. That is a successful call, not a malformed answer.
+  describe("when the Odoo method returns None", () => {
+    const voidAnswer = JSON.stringify({ jsonrpc: "2.0", id: 1 });
+
+    function startVoidOdoo() {
+      return startServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(voidAnswer);
+      });
+    }
+
+    it("resolves jsonRpc to undefined", async () => {
+      const odoo = await startVoidOdoo();
+
+      await expect(jsonRpc(odoo.url, "object", "execute_kw", [])).resolves.toBeUndefined();
+    });
+
+    it("resolves OdooClient.callMethod to undefined", async () => {
+      const odoo = await startVoidOdoo();
+      const client = new OdooClient({ url: odoo.url, db: "db", uid: 2, apiKey: "secret" });
+
+      await expect(
+        client.callMethod("account.move.line", "reconcile", [[1, 2]]),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  it("returns an explicit null result as null", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }));
+    });
+
+    await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBeNull();
+  });
+
+  it("still accepts an answer that carries a result but no jsonrpc member", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ result: 7 }));
+    });
+
+    await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBe(7);
+  });
+
+  it("reports an empty 204 answer as not JSON-RPC", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+
+    const err = await rejectionOf(jsonRpc(odoo.url, "common", "version", []));
+
+    expect(err.message).toBe("Response is not JSON-RPC (HTTP 204, no content type)");
+    expect(err.code).toBe(204);
+  });
+
   it("reports a non-JSON answer without quoting the response body", async () => {
     const odoo = await startServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -250,7 +311,9 @@ describe("jsonRpc against a real HTTP server", () => {
     expect(err.message).toBe("Response is not JSON-RPC (HTTP 200, no content type)");
   });
 
-  it.each([["null"], ["[1, 2]"], ['"BODY-MARKER"'], ['{"jsonrpc":"2.0","id":1}']])(
+  // An object with none of "jsonrpc", "result" or "error" (a proxy's {"detail": "…"}) is not
+  // Odoo's answer; resolving it as a void result would report a write that never ran as done.
+  it.each([["null"], ["[1, 2]"], ['"BODY-MARKER"'], ["{}"], ['{"detail":"BODY-MARKER"}']])(
     "reports valid JSON that is not a JSON-RPC envelope (%s) the same way",
     async (body) => {
       const odoo = await startServer((_req, res) => {

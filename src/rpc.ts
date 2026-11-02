@@ -75,6 +75,12 @@ export async function jsonRpc<T>(
 // Parses the body as a JSON-RPC envelope. Anything else is reported by status and content type
 // only: JSON.parse's SyntaxError quotes the start of the body, and that text is not ours to put
 // in an error message callers show to people.
+//
+// An envelope is a JSON object carrying "jsonrpc", "result" or "error". "result" alone is not
+// required: Odoo 14–19 always send {"jsonrpc": "2.0", "id": …} and add "result" only when the
+// method returned something other than None, so a void method (account.move.line.reconcile)
+// answers without one — after its write committed. "jsonrpc" alone is not required either:
+// answers shaped {"result": …} were accepted before and stay accepted.
 async function readJsonRpc<T>(response: Response): Promise<JsonRpcResponse<T>> {
   let text: string;
   try {
@@ -94,7 +100,7 @@ async function readJsonRpc<T>(response: Response): Promise<JsonRpcResponse<T>> {
     typeof json !== "object" ||
     json === null ||
     Array.isArray(json) ||
-    !("result" in json || "error" in json)
+    !("jsonrpc" in json || "result" in json || "error" in json)
   ) {
     const contentType = response.headers.get("content-type")?.split(";")[0].trim().slice(0, 100);
     throw new OdooError(
