@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { OdooClient } from "./client.js";
 import { jsonRpc, OdooError } from "./rpc.js";
 
 describe("jsonRpc", () => {
@@ -119,5 +122,226 @@ describe("jsonRpc", () => {
     await expect(jsonRpc("https://odoo.example.com", "common", "version", [])).rejects.toThrow(
       OdooError,
     );
+  });
+});
+
+// These run against real HTTP servers on 127.0.0.1 and the real global fetch, not a stub:
+// redirect handling is fetch's behaviour, so a stubbed fetch could not prove anything about it.
+describe("jsonRpc against a real HTTP server", () => {
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+
+  const servers: Server[] = [];
+
+  async function startServer(handler: Handler): Promise<{ url: string; requests: string[] }> {
+    const requests: string[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        requests.push(body);
+        handler(req, res);
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return { url: `http://127.0.0.1:${port}`, requests };
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+  });
+
+  async function rejectionOf(promise: Promise<unknown>): Promise<OdooError> {
+    try {
+      await promise;
+    } catch (err) {
+      expect(err).toBeInstanceOf(OdooError);
+      return err as OdooError;
+    }
+    throw new Error("expected the call to reject");
+  }
+
+  const jsonRpcResult = JSON.stringify({ jsonrpc: "2.0", id: 1, result: 7 });
+
+  describe.each([301, 302, 303, 307, 308])("when Odoo answers with HTTP %i", (status) => {
+    it("refuses the redirect and never contacts the redirect target", async () => {
+      // The target stands in for 169.254.169.254 / loopback: anything the caller's
+      // SSRF check would have refused had it been the configured URL.
+      const target = await startServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(jsonRpcResult);
+      });
+      const odoo = await startServer((_req, res) => {
+        res.writeHead(status, { Location: `${target.url}/jsonrpc` });
+        res.end();
+      });
+
+      const err = await rejectionOf(
+        jsonRpc(odoo.url, "common", "authenticate", ["db", "admin", "secret-api-key", {}]),
+      );
+
+      expect(err.message).toBe(
+        `Odoo answered with a redirect (HTTP ${status}); odoo-node does not follow redirects. ` +
+          "Use the address Odoo is actually served from.",
+      );
+      expect(err.code).toBe(status);
+      expect(odoo.requests).toHaveLength(1);
+      expect(target.requests).toHaveLength(0);
+    });
+  });
+
+  it("does not send the API key to a redirect target via OdooClient.authenticate", async () => {
+    const target = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(jsonRpcResult);
+    });
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(307, { Location: `${target.url}/jsonrpc` });
+      res.end();
+    });
+
+    await rejectionOf(
+      OdooClient.authenticate({ url: odoo.url, db: "db", login: "admin", apiKey: "secret" }),
+    );
+
+    expect(target.requests).toHaveLength(0);
+  });
+
+  it("still returns the result of a plain JSON-RPC answer", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(jsonRpcResult);
+    });
+
+    await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBe(7);
+  });
+
+  // Odoo 14–19 build every JSON-RPC answer as {"jsonrpc": "2.0", "id": …} and add "result" only
+  // when the method returned something other than None (15.0 `_json_response`, 16.0+
+  // `JsonRPCDispatcher._response`). So a method that returns None — account.move.line.reconcile,
+  // or account.move.js_assign_outstanding_line in Odoo 19 — answers with no "result" key at all,
+  // after its write has committed. That is a successful call, not a malformed answer.
+  describe("when the Odoo method returns None", () => {
+    const voidAnswer = JSON.stringify({ jsonrpc: "2.0", id: 1 });
+
+    function startVoidOdoo() {
+      return startServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(voidAnswer);
+      });
+    }
+
+    it("resolves jsonRpc to undefined", async () => {
+      const odoo = await startVoidOdoo();
+
+      await expect(jsonRpc(odoo.url, "object", "execute_kw", [])).resolves.toBeUndefined();
+    });
+
+    it("resolves OdooClient.callMethod to undefined", async () => {
+      const odoo = await startVoidOdoo();
+      const client = new OdooClient({ url: odoo.url, db: "db", uid: 2, apiKey: "secret" });
+
+      await expect(
+        client.callMethod("account.move.line", "reconcile", [[1, 2]]),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  it("returns an explicit null result as null", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }));
+    });
+
+    await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBeNull();
+  });
+
+  it("still accepts an answer that carries a result but no jsonrpc member", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ result: 7 }));
+    });
+
+    await expect(jsonRpc(odoo.url, "common", "version", [])).resolves.toBe(7);
+  });
+
+  it("reports an empty 204 answer as not JSON-RPC", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+
+    const err = await rejectionOf(jsonRpc(odoo.url, "common", "version", []));
+
+    expect(err.message).toBe("Response is not JSON-RPC (HTTP 204, no content type)");
+    expect(err.code).toBe(204);
+  });
+
+  it("reports a non-JSON answer without quoting the response body", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<html><body>BODY-MARKER internal hostname db-01.corp</body></html>");
+    });
+
+    const err = await rejectionOf(jsonRpc(odoo.url, "common", "version", []));
+
+    expect(err.message).toBe("Response is not JSON-RPC (HTTP 200, text/html)");
+    expect(err.message).not.toContain("BODY-MARKER");
+    expect(JSON.stringify(err)).not.toContain("BODY-MARKER");
+    expect(String(err.stack)).not.toContain("BODY-MARKER");
+  });
+
+  it("reports an answer without a content type", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200);
+      res.end("BODY-MARKER");
+    });
+
+    const err = await rejectionOf(jsonRpc(odoo.url, "common", "version", []));
+
+    expect(err.message).toBe("Response is not JSON-RPC (HTTP 200, no content type)");
+  });
+
+  // An object with none of "jsonrpc", "result" or "error" (a proxy's {"detail": "…"}) is not
+  // Odoo's answer; resolving it as a void result would report a write that never ran as done.
+  it.each([["null"], ["[1, 2]"], ['"BODY-MARKER"'], ["{}"], ['{"detail":"BODY-MARKER"}']])(
+    "reports valid JSON that is not a JSON-RPC envelope (%s) the same way",
+    async (body) => {
+      const odoo = await startServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(body);
+      });
+
+      const err = await rejectionOf(jsonRpc(odoo.url, "common", "version", []));
+
+      expect(err.message).toBe("Response is not JSON-RPC (HTTP 200, application/json)");
+    },
+  );
+
+  it("keeps reporting a JSON-RPC error payload with Odoo's message", async () => {
+    const odoo = await startServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: 200, message: "Odoo Server Error", data: { message: "Access Denied" } },
+        }),
+      );
+    });
+
+    const err = await rejectionOf(jsonRpc(odoo.url, "common", "authenticate", []));
+
+    expect(err.message).toBe("Access Denied");
+    expect(err.code).toBe(200);
   });
 });
