@@ -22,7 +22,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          # No dependency cache: this job holds an OIDC token that can publish,
+          # so it must not restore state another run wrote. (setup-node@v4 only
+          # caches when `cache` is set.)
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
@@ -31,5 +33,7 @@ jobs:
       # Trusted Publishing: npm exchanges this job's OIDC token (id-token: write)
       # for a short-lived publish credential, so no long-lived NPM_TOKEN exists to
       # expire or leak. Needs npm >= 11.5.1; Node 22 ships npm 10.
-      - run: npm install -g npm@11
-      - run: npm publish --provenance --access public
+      # Pinned so a release run is reproducible; any npm >= 11.5.1 works.
+      - run: npm install -g npm@11.21.1
+      # Provenance is generated automatically under Trusted Publishing.
+      - run: npm publish --access public
