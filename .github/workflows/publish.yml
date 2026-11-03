@@ -32,8 +32,9 @@ jobs:
       - run: pnpm build
       # Trusted Publishing: npm exchanges this job's OIDC token (id-token: write)
       # for a short-lived publish credential, so no long-lived NPM_TOKEN exists to
-      # expire or leak. Needs npm >= 11.5.1; Node 22 ships npm 10.
-      # Pinned so a release run is reproducible; any npm >= 11.5.1 works.
+      # expire or leak. Needs npm >= 11.5.1 and Node >= 22.14; Node 22 ships npm 10.
+      # Pinned to a version verified to install and publish here: not every
+      # newer npm does (npm 12.0.0 shipped without sigstore, npm/cli#9722).
       - run: npm install -g npm@11.21.1
       # Provenance is generated automatically under Trusted Publishing.
       - run: npm publish --access public
