@@ -55,12 +55,18 @@ export async function jsonRpc<T>(
   }
 
   // `redirected` catches a given fetch that followed the hop itself, whatever it was asked: the
-  // request already went out, but its answer came from an address nobody checked.
-  if (
-    response.type === "opaqueredirect" ||
-    response.redirected ||
-    (response.status >= 300 && response.status < 400)
-  ) {
+  // request already went out, but its answer came from an address nobody checked. Its status is
+  // the target's, so the message names neither.
+  if (response.redirected) {
+    await discardBody(response);
+    throw new OdooError(
+      "Odoo's answer came through a redirect that the given fetch followed. Pass a fetch that " +
+        'keeps redirect: "manual", and use the address Odoo is actually served from.',
+      response.status,
+    );
+  }
+
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
     await discardBody(response);
     throw new OdooError(
       `Odoo answered with a redirect (HTTP ${response.status}); odoo-node does not follow ` +
@@ -78,10 +84,12 @@ export async function jsonRpc<T>(
 
   if (json.error) {
     // Odoo puts its message in error.data; a plain JSON-RPC 2.0 error (a proxy, a server that
-    // is not Odoo) has only error.message. An error carrying neither is not an answer to report.
+    // is not Odoo) has only error.message. An empty data.message (Odoo's str() of an exception
+    // raised without arguments) falls back to error.message. An error carrying neither is not an
+    // answer to report.
     const error = json.error as Partial<NonNullable<JsonRpcResponse<T>["error"]>>;
     const message =
-      typeof error.data?.message === "string"
+      typeof error.data?.message === "string" && error.data.message !== ""
         ? error.data.message
         : typeof error.message === "string"
           ? error.message
@@ -138,17 +146,28 @@ async function readJsonRpc<T>(
 
 // The original error stays as the cause: its name tells a timeout (a write may have committed)
 // from a refused connection. An abort whose reason is not an Error (`abort("shutdown")`) rejects
-// with that bare reason; it is named as an abort, not as a network failure.
+// with that bare reason; it is named as an abort, not as a network failure. An Error is
+// recognised by its message, not by `instanceof`: one from another realm (a vm context, jsdom)
+// fails that check.
 function networkError(err: unknown, signal: AbortSignal | undefined): OdooError {
   const message =
-    err instanceof Error ? err.message : signal?.aborted ? "Request aborted" : "Network error";
+    err instanceof Error || typeof (err as { message?: unknown } | null)?.message === "string"
+      ? (err as Error).message
+      : signal?.aborted
+        ? "Request aborted"
+        : "Network error";
   return new OdooError(message, 0, undefined, { cause: err });
 }
 
 // An unread body keeps its connection busy until something times out. Releasing it is cleanup
-// only: a body that already failed must not replace the error the caller is about to get.
+// only: a body that already failed, or one that is not a web stream (node-fetch hands back a
+// Node stream without cancel()), must not replace the error the caller is about to get.
 async function discardBody(response: Response): Promise<void> {
-  await response.body?.cancel().catch(() => {});
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Nothing to release, or nothing more to do.
+  }
 }
 
 // Status and content type only, never the body: see readJsonRpc.
