@@ -4,8 +4,13 @@ export class OdooError extends Error {
   code: number;
   data?: Record<string, unknown>;
 
-  constructor(message: string, code: number = 0, data?: Record<string, unknown>) {
-    super(message);
+  constructor(
+    message: string,
+    code: number = 0,
+    data?: Record<string, unknown>,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
     this.name = "OdooError";
     this.code = code;
     this.data = data;
@@ -46,7 +51,11 @@ export async function jsonRpc<T>(
       signal: transport.signal,
     });
   } catch (err) {
-    throw new OdooError(err instanceof Error ? err.message : "Network error");
+    // The original error stays as the cause: its name tells a timeout (a write may have
+    // committed) from a refused connection.
+    throw new OdooError(err instanceof Error ? err.message : "Network error", 0, undefined, {
+      cause: err,
+    });
   }
 
   if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
@@ -59,6 +68,8 @@ export async function jsonRpc<T>(
   }
 
   if (!response.ok) {
+    // An unread body keeps its connection busy until something times out.
+    await response.body?.cancel();
     throw new OdooError(`HTTP ${response.status}: ${response.statusText}`, response.status);
   }
 
@@ -89,7 +100,11 @@ async function readJsonRpc<T>(response: Response): Promise<JsonRpcResponse<T>> {
   try {
     text = await response.text();
   } catch (err) {
-    throw new OdooError(err instanceof Error ? err.message : "Network error");
+    // The original error stays as the cause: its name tells a timeout (a write may have
+    // committed) from a refused connection.
+    throw new OdooError(err instanceof Error ? err.message : "Network error", 0, undefined, {
+      cause: err,
+    });
   }
 
   let json: unknown;

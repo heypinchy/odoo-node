@@ -58,7 +58,7 @@ Create a client. Config: `{ url, db, uid, apiKey }`, plus the optional transport
 Both the constructor and `authenticate` take two optional fields that control how requests reach Odoo:
 
 - `fetch` — used for every request instead of the global `fetch`. It is always called with a URL string and a `RequestInit`, never a `Request`. Use it to pin the connection to addresses you checked, send it through a proxy or a custom dispatcher, or add a timeout, without replacing the process-wide `fetch`.
-- `signal` — an `AbortSignal` passed to every request. Aborting it fails the call in flight with an `OdooError`.
+- `signal` — an `AbortSignal` passed to every request. Aborting it fails the call in flight with an `OdooError` whose `cause` is the abort error.
 
 ```typescript
 const client = new OdooClient({
@@ -66,7 +66,12 @@ const client = new OdooClient({
   db: "mycompany",
   uid,
   apiKey: "your-api-key",
-  fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(30_000) }),
+  // Combine with init.signal: it carries the `signal` you configured, if any.
+  fetch: (url, init) => {
+    const timeout = AbortSignal.timeout(30_000);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    return fetch(url, { ...init, signal });
+  },
 });
 ```
 

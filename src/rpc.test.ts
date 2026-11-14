@@ -116,6 +116,29 @@ describe("jsonRpc", () => {
     );
   });
 
+  it("releases the body of an HTTP error instead of leaving it unread", async () => {
+    // An unread body keeps its connection busy until something times out — a
+    // proxy's multi-megabyte 502 page would otherwise hold the socket.
+    const response = new Response("x".repeat(1024 * 1024), { status: 502 });
+    vi.mocked(globalThis.fetch).mockResolvedValue(response);
+
+    await expect(jsonRpc("https://odoo.example.com", "common", "version", [])).rejects.toThrow(
+      "HTTP 502",
+    );
+    expect(response.bodyUsed).toBe(true);
+  });
+
+  it("keeps the network error as the cause, so a timeout can be told from a refusal", async () => {
+    const failure = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    vi.mocked(globalThis.fetch).mockRejectedValue(failure);
+
+    const err = await jsonRpc("https://odoo.example.com", "common", "version", []).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).cause).toBe(failure);
+  });
+
   it("throws OdooError on network failure", async () => {
     vi.mocked(globalThis.fetch).mockRejectedValue(new TypeError("fetch failed"));
 
