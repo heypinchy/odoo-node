@@ -7,10 +7,15 @@ export interface OdooTransport {
    * The `fetch` every request goes through, instead of the global one. Use it to control the
    * connection without replacing the process-wide `fetch`: pin it to addresses you checked, send
    * it through a proxy or a custom dispatcher, add a timeout. It is always called with a URL
-   * string, never a `Request`.
+   * string, never a `Request`. It must not follow redirects itself: odoo-node asks for
+   * `redirect: "manual"` and refuses any answer that comes from a redirect.
    */
-  fetch?: typeof globalThis.fetch;
-  /** Passed to every request. Aborting it fails the call in flight with an `OdooError`. */
+  fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  /**
+   * Passed to every request. Aborting it fails the call in flight with an `OdooError`. It belongs
+   * to the client: once aborted, every later call fails at once. For a deadline per call, add it
+   * in `fetch` instead.
+   */
   signal?: AbortSignal;
 }
 
@@ -85,6 +90,7 @@ export interface JsonRpcResponse<T> {
   error?: {
     code: number;
     message: string;
-    data: { message: string };
+    /** Odoo always sends it; a plain JSON-RPC 2.0 error does not. */
+    data?: { message: string };
   };
 }

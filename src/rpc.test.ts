@@ -75,6 +75,42 @@ describe("jsonRpc", () => {
     );
   });
 
+  it("reports a JSON-RPC error that carries no data by its own message", async () => {
+    // Plain JSON-RPC 2.0, as a proxy or a non-Odoo server sends it: no "data" member.
+    const errorBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+    vi.mocked(globalThis.fetch).mockImplementation(async () => new Response(errorBody));
+
+    const err = await jsonRpc("https://odoo.example.com", "common", "version", []).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("Invalid Request");
+    expect((err as OdooError).code).toBe(-32600);
+  });
+
+  it("reports a JSON-RPC error that carries no message at all as not JSON-RPC", async () => {
+    // An envelope of the wrong shape says nothing a caller could use; its members are whatever
+    // the other side chose to send.
+    const errorBody = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { "my-role": 1 } });
+    vi.mocked(globalThis.fetch).mockImplementation(
+      async () => new Response(errorBody, { headers: { "Content-Type": "application/json" } }),
+    );
+
+    const err = await jsonRpc("https://odoo.example.com", "common", "version", []).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe(
+      "Response is not JSON-RPC (HTTP 200, application/json)",
+    );
+  });
+
   it("OdooError has code and data fields", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response(
@@ -456,6 +492,55 @@ describe("jsonRpc with a fetch and signal supplied by the caller", () => {
     const err = await call.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OdooError);
     expect((err as OdooError).message).toMatch(/abort/i);
+  });
+
+  it("names a deliberate abort even when its reason is not an Error", async () => {
+    const url = await startServer(() => {});
+    const controller = new AbortController();
+    const ownFetch: typeof fetch = (input, init) => originalFetch(input, init);
+
+    const call = jsonRpc(url, "common", "version", [], {
+      fetch: ownFetch,
+      signal: controller.signal,
+    });
+    controller.abort("shutdown");
+
+    const err = await call.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("Request aborted");
+    expect((err as OdooError).cause).toBe("shutdown");
+  });
+
+  it("refuses an answer the given fetch reached by following a redirect itself", async () => {
+    // The target stands in for an address the caller never checked.
+    const target = await startServer(answering(2));
+    const url = await startServer((_req, res) => {
+      res.writeHead(307, { Location: `${target}/jsonrpc` });
+      res.end();
+    });
+    const following: typeof fetch = (input, init) =>
+      originalFetch(input, { ...init, redirect: "follow" });
+
+    await expect(jsonRpc(url, "common", "version", [], { fetch: following })).rejects.toThrow(
+      "Odoo answered with a redirect",
+    );
+  });
+
+  it("reports an HTTP error by its status even when its body has already failed", async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("connection reset"));
+      },
+    });
+    const ownFetch: typeof fetch = async () =>
+      new Response(broken, { status: 502, statusText: "Bad Gateway" });
+
+    const err = await jsonRpc("http://odoo.test", "common", "version", [], {
+      fetch: ownFetch,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("HTTP 502: Bad Gateway");
   });
 
   it("routes every OdooClient call through the client's fetch and signal", async () => {

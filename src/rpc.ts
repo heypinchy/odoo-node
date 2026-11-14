@@ -51,15 +51,17 @@ export async function jsonRpc<T>(
       signal: transport.signal,
     });
   } catch (err) {
-    // The original error stays as the cause: its name tells a timeout (a write may have
-    // committed) from a refused connection.
-    throw new OdooError(err instanceof Error ? err.message : "Network error", 0, undefined, {
-      cause: err,
-    });
+    throw networkError(err, transport.signal);
   }
 
-  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
-    await response.body?.cancel();
+  // `redirected` catches a given fetch that followed the hop itself, whatever it was asked: the
+  // request already went out, but its answer came from an address nobody checked.
+  if (
+    response.type === "opaqueredirect" ||
+    response.redirected ||
+    (response.status >= 300 && response.status < 400)
+  ) {
+    await discardBody(response);
     throw new OdooError(
       `Odoo answered with a redirect (HTTP ${response.status}); odoo-node does not follow ` +
         "redirects. Use the address Odoo is actually served from.",
@@ -68,18 +70,27 @@ export async function jsonRpc<T>(
   }
 
   if (!response.ok) {
-    // An unread body keeps its connection busy until something times out.
-    await response.body?.cancel();
+    await discardBody(response);
     throw new OdooError(`HTTP ${response.status}: ${response.statusText}`, response.status);
   }
 
-  const json = await readJsonRpc<T>(response);
+  const json = await readJsonRpc<T>(response, transport.signal);
 
   if (json.error) {
+    // Odoo puts its message in error.data; a plain JSON-RPC 2.0 error (a proxy, a server that
+    // is not Odoo) has only error.message. An error carrying neither is not an answer to report.
+    const error = json.error as Partial<NonNullable<JsonRpcResponse<T>["error"]>>;
+    const message =
+      typeof error.data?.message === "string"
+        ? error.data.message
+        : typeof error.message === "string"
+          ? error.message
+          : undefined;
+    if (message === undefined) throw notJsonRpc(response);
     throw new OdooError(
-      json.error.data.message,
-      json.error.code,
-      json.error.data as unknown as Record<string, unknown>,
+      message,
+      error.code,
+      error.data as unknown as Record<string, unknown> | undefined,
     );
   }
 
@@ -95,16 +106,15 @@ export async function jsonRpc<T>(
 // method returned something other than None, so a void method (account.move.line.reconcile)
 // answers without one — after its write committed. "jsonrpc" alone is not required either:
 // answers shaped {"result": …} were accepted before and stay accepted.
-async function readJsonRpc<T>(response: Response): Promise<JsonRpcResponse<T>> {
+async function readJsonRpc<T>(
+  response: Response,
+  signal: AbortSignal | undefined,
+): Promise<JsonRpcResponse<T>> {
   let text: string;
   try {
     text = await response.text();
   } catch (err) {
-    // The original error stays as the cause: its name tells a timeout (a write may have
-    // committed) from a refused connection.
-    throw new OdooError(err instanceof Error ? err.message : "Network error", 0, undefined, {
-      cause: err,
-    });
+    throw networkError(err, signal);
   }
 
   let json: unknown;
@@ -120,12 +130,32 @@ async function readJsonRpc<T>(response: Response): Promise<JsonRpcResponse<T>> {
     Array.isArray(json) ||
     !("jsonrpc" in json || "result" in json || "error" in json)
   ) {
-    const contentType = response.headers.get("content-type")?.split(";")[0].trim().slice(0, 100);
-    throw new OdooError(
-      `Response is not JSON-RPC (HTTP ${response.status}, ${contentType || "no content type"})`,
-      response.status,
-    );
+    throw notJsonRpc(response);
   }
 
   return json as JsonRpcResponse<T>;
+}
+
+// The original error stays as the cause: its name tells a timeout (a write may have committed)
+// from a refused connection. An abort whose reason is not an Error (`abort("shutdown")`) rejects
+// with that bare reason; it is named as an abort, not as a network failure.
+function networkError(err: unknown, signal: AbortSignal | undefined): OdooError {
+  const message =
+    err instanceof Error ? err.message : signal?.aborted ? "Request aborted" : "Network error";
+  return new OdooError(message, 0, undefined, { cause: err });
+}
+
+// An unread body keeps its connection busy until something times out. Releasing it is cleanup
+// only: a body that already failed must not replace the error the caller is about to get.
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => {});
+}
+
+// Status and content type only, never the body: see readJsonRpc.
+function notJsonRpc(response: Response): OdooError {
+  const contentType = response.headers.get("content-type")?.split(";")[0].trim().slice(0, 100);
+  return new OdooError(
+    `Response is not JSON-RPC (HTTP ${response.status}, ${contentType || "no content type"})`,
+    response.status,
+  );
 }
