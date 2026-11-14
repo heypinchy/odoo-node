@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { runInNewContext } from "node:vm";
 import { OdooClient } from "./client.js";
 import { jsonRpc, OdooError } from "./rpc.js";
 
@@ -91,6 +92,29 @@ describe("jsonRpc", () => {
     expect(err).toBeInstanceOf(OdooError);
     expect((err as OdooError).message).toBe("Invalid Request");
     expect((err as OdooError).code).toBe(-32600);
+  });
+
+  it("falls back to the envelope's message when Odoo's own message is empty", async () => {
+    // Odoo sets data.message to str(exception): a bare `assert` or an exception raised without
+    // arguments gives "".
+    const errorBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      error: {
+        code: 200,
+        message: "Odoo Server Error",
+        data: { name: "builtins.AssertionError", message: "" },
+      },
+    });
+    vi.mocked(globalThis.fetch).mockImplementation(async () => new Response(errorBody));
+
+    const err = await jsonRpc("https://odoo.example.com", "object", "execute_kw", []).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("Odoo Server Error");
+    expect((err as OdooError).data).toMatchObject({ name: "builtins.AssertionError" });
   });
 
   it("reports a JSON-RPC error that carries no message at all as not JSON-RPC", async () => {
@@ -521,9 +545,57 @@ describe("jsonRpc with a fetch and signal supplied by the caller", () => {
     const following: typeof fetch = (input, init) =>
       originalFetch(input, { ...init, redirect: "follow" });
 
-    await expect(jsonRpc(url, "common", "version", [], { fetch: following })).rejects.toThrow(
-      "Odoo answered with a redirect",
+    const err = await jsonRpc(url, "common", "version", [], { fetch: following }).catch(
+      (e: unknown) => e,
     );
+
+    // The hop was followed and the final status is the target's 200: neither "does not follow"
+    // nor that status describes what happened.
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe(
+      "Odoo's answer came through a redirect that the given fetch followed. Pass a fetch that " +
+        'keeps redirect: "manual", and use the address Odoo is actually served from.',
+    );
+  });
+
+  it("reports an HTTP error by its status when the body cannot be cancelled", async () => {
+    // node-fetch and similar return a Node stream as the body, which has no cancel().
+    const ownFetch = (async () =>
+      ({
+        ok: false,
+        status: 502,
+        statusText: "Bad Gateway",
+        redirected: false,
+        type: "basic",
+        headers: new Headers(),
+        body: {},
+      }) as unknown as Response) as typeof fetch;
+
+    const err = await jsonRpc("http://odoo.test", "common", "version", [], {
+      fetch: ownFetch,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("HTTP 502: Bad Gateway");
+  });
+
+  it("names an error from another realm by its own message", async () => {
+    // A wrapped fetch running in a vm context or under jsdom rejects with an Error that fails
+    // `instanceof Error` here.
+    const foreign = runInNewContext(
+      'Object.assign(new Error("timed out"), { name: "TimeoutError" })',
+    );
+    const ownFetch: typeof fetch = async () => {
+      throw foreign;
+    };
+
+    const err = await jsonRpc("http://odoo.test", "common", "version", [], {
+      fetch: ownFetch,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toBe("timed out");
+    expect((err as OdooError).cause).toBe(foreign);
   });
 
   it("reports an HTTP error by its status even when its body has already failed", async () => {
