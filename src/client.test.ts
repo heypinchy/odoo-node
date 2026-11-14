@@ -49,6 +49,7 @@ describe("OdooClient", () => {
         "common",
         "version",
         [],
+        {},
       );
       expect(result).toEqual({
         serverVersion: "17.0",
@@ -80,6 +81,7 @@ describe("OdooClient", () => {
           [[]],
           { fields: ["model", "name"] },
         ],
+        {},
       );
       expect(result).toEqual([
         { model: "res.partner", name: "Contact" },
@@ -123,6 +125,7 @@ describe("OdooClient", () => {
             attributes: ["string", "type", "required", "readonly", "relation", "selection"],
           },
         ],
+        {},
       );
       expect(result).toEqual([
         {
@@ -168,6 +171,7 @@ describe("OdooClient", () => {
           [[["is_company", "=", true]]],
           {},
         ],
+        {},
       );
 
       // search_read call
@@ -184,6 +188,7 @@ describe("OdooClient", () => {
           [[["is_company", "=", true]]],
           { fields: undefined, limit: 100, offset: 0, order: undefined },
         ],
+        {},
       );
 
       expect(result).toEqual({
@@ -217,6 +222,7 @@ describe("OdooClient", () => {
           [[]],
           { fields: ["name"], limit: 10, offset: 20, order: "name asc" },
         ],
+        {},
       );
     });
 
@@ -240,6 +246,7 @@ describe("OdooClient", () => {
         "object",
         "execute_kw",
         ["testdb", 2, "test-api-key", "res.partner", "search_count", [[["active", "=", true]]], {}],
+        {},
       );
     });
   });
@@ -275,6 +282,7 @@ describe("OdooClient", () => {
             lazy: undefined,
           },
         ],
+        {},
       );
 
       expect(result).toEqual({
@@ -312,6 +320,7 @@ describe("OdooClient", () => {
             lazy: false,
           },
         ],
+        {},
       );
     });
   });
@@ -328,6 +337,7 @@ describe("OdooClient", () => {
         "object",
         "execute_kw",
         ["testdb", 2, "test-api-key", "res.partner", "create", [{ name: "Acme Corp" }], {}],
+        {},
       );
     });
   });
@@ -346,6 +356,7 @@ describe("OdooClient", () => {
         "object",
         "execute_kw",
         ["testdb", 2, "test-api-key", "res.partner", "write", [[1, 2], { name: "Updated" }], {}],
+        {},
       );
     });
   });
@@ -362,6 +373,7 @@ describe("OdooClient", () => {
         "object",
         "execute_kw",
         ["testdb", 2, "test-api-key", "res.partner", "unlink", [[1]], {}],
+        {},
       );
     });
   });
@@ -385,6 +397,7 @@ describe("OdooClient", () => {
           ["read"],
           { raise_exception: false },
         ],
+        {},
       );
       expect(result).toBe(true);
     });
@@ -420,6 +433,7 @@ describe("OdooClient", () => {
           [[5]],
           { feedback: "Done" },
         ],
+        {},
       );
     });
 
@@ -433,6 +447,7 @@ describe("OdooClient", () => {
         "object",
         "execute_kw",
         ["testdb", 2, "test-api-key", "crm.lead", "some_method", [], {}],
+        {},
       );
     });
   });
@@ -459,6 +474,7 @@ describe("OdooClient.authenticate", () => {
       "common",
       "authenticate",
       ["testdb", "admin", "test-key", {}],
+      {},
     );
   });
 
@@ -473,5 +489,40 @@ describe("OdooClient.authenticate", () => {
         apiKey: "wrong-key",
       }),
     ).rejects.toThrow("Authentication failed");
+  });
+});
+
+describe("OdooClient transport", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedJsonRpc.mockResolvedValue(1);
+  });
+
+  it("passes its fetch and signal to every call", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const signal = new AbortController().signal;
+    const client = new OdooClient({ ...config, fetch, signal });
+
+    await client.searchCount("res.partner", []);
+    await client.callMethod("res.partner", "name_search", ["x"]);
+
+    expect(mockedJsonRpc).toHaveBeenCalledTimes(2);
+    for (const call of mockedJsonRpc.mock.calls) expect(call[4]).toEqual({ fetch, signal });
+  });
+
+  it("passes the fetch and signal given to authenticate", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const signal = new AbortController().signal;
+
+    await OdooClient.authenticate({
+      url: "https://odoo.example.com",
+      db: "testdb",
+      login: "admin",
+      apiKey: "k",
+      fetch,
+      signal,
+    });
+
+    expect(mockedJsonRpc.mock.calls[0][4]).toEqual({ fetch, signal });
   });
 });

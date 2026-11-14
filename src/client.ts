@@ -2,6 +2,7 @@ import { jsonRpc, OdooError } from "./rpc.js";
 import type {
   OdooClientConfig,
   OdooAuthConfig,
+  OdooTransport,
   OdooVersion,
   OdooModel,
   OdooField,
@@ -19,21 +20,24 @@ export class OdooClient {
   private db: string;
   private uid: number;
   private apiKey: string;
+  private transport: OdooTransport;
 
   constructor(config: OdooClientConfig) {
     this.url = config.url;
     this.db = config.db;
     this.uid = config.uid;
     this.apiKey = config.apiKey;
+    this.transport = transportOf(config);
   }
 
   static async authenticate(auth: OdooAuthConfig): Promise<number> {
-    const uid = await jsonRpc<number | false>(auth.url, "common", "authenticate", [
-      auth.db,
-      auth.login,
-      auth.apiKey,
-      {},
-    ]);
+    const uid = await jsonRpc<number | false>(
+      auth.url,
+      "common",
+      "authenticate",
+      [auth.db, auth.login, auth.apiKey, {}],
+      transportOf(auth),
+    );
     if (uid === false) {
       throw new OdooError("Authentication failed");
     }
@@ -45,7 +49,7 @@ export class OdooClient {
       server_version: string;
       server_version_info: (number | string)[];
       protocol_version: number;
-    }>(this.url, "common", "version", []);
+    }>(this.url, "common", "version", [], this.transport);
 
     return {
       serverVersion: raw.server_version,
@@ -164,14 +168,16 @@ export class OdooClient {
     args: unknown[],
     kwargs?: Record<string, unknown>,
   ): Promise<T> {
-    return jsonRpc<T>(this.url, "object", "execute_kw", [
-      this.db,
-      this.uid,
-      this.apiKey,
-      model,
-      method,
-      args,
-      kwargs ?? {},
-    ]);
+    return jsonRpc<T>(
+      this.url,
+      "object",
+      "execute_kw",
+      [this.db, this.uid, this.apiKey, model, method, args, kwargs ?? {}],
+      this.transport,
+    );
   }
+}
+
+function transportOf({ fetch, signal }: OdooTransport): OdooTransport {
+  return { fetch, signal };
 }

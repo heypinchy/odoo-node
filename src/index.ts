@@ -3,6 +3,7 @@ export { OdooError } from "./rpc.js";
 export type {
   OdooClientConfig,
   OdooAuthConfig,
+  OdooTransport,
   OdooVersion,
   OdooModel,
   OdooField,

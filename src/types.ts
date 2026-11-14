@@ -1,11 +1,27 @@
-export interface OdooClientConfig {
+/**
+ * How odoo-node reaches Odoo. Both are optional; without them every call uses the global `fetch`
+ * and has no deadline.
+ */
+export interface OdooTransport {
+  /**
+   * The `fetch` every request goes through, instead of the global one. Use it to control the
+   * connection without replacing the process-wide `fetch`: pin it to addresses you checked, send
+   * it through a proxy or a custom dispatcher, add a timeout. It is always called with a URL
+   * string, never a `Request`.
+   */
+  fetch?: typeof globalThis.fetch;
+  /** Passed to every request. Aborting it fails the call in flight with an `OdooError`. */
+  signal?: AbortSignal;
+}
+
+export interface OdooClientConfig extends OdooTransport {
   url: string;
   db: string;
   uid: number;
   apiKey: string;
 }
 
-export interface OdooAuthConfig {
+export interface OdooAuthConfig extends OdooTransport {
   url: string;
   db: string;
   login: string;

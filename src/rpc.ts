@@ -1,4 +1,4 @@
-import type { JsonRpcResponse } from "./types.js";
+import type { JsonRpcResponse, OdooTransport } from "./types.js";
 
 export class OdooError extends Error {
   code: number;
@@ -19,6 +19,7 @@ export async function jsonRpc<T>(
   service: string,
   method: string,
   args: unknown[],
+  transport: OdooTransport = {},
 ): Promise<T> {
   const id = ++requestId;
   const url = `${baseUrl}/jsonrpc`;
@@ -31,7 +32,8 @@ export async function jsonRpc<T>(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    const send = transport.fetch ?? fetch;
+    response = await send(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -41,6 +43,7 @@ export async function jsonRpc<T>(
       // redirects. "manual" rather than "error": "error" surfaces as a bare "fetch failed",
       // while "manual" lets us name the status in the error.
       redirect: "manual",
+      signal: transport.signal,
     });
   } catch (err) {
     throw new OdooError(err instanceof Error ? err.message : "Network error");

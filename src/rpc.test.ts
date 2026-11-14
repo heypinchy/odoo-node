@@ -345,3 +345,114 @@ describe("jsonRpc against a real HTTP server", () => {
     expect(err.code).toBe(200);
   });
 });
+
+// A caller that has to control the connection — pin it to addresses it checked, route it through
+// a proxy, bound how long it may take — hands odoo-node its own fetch and signal instead of
+// replacing the process-wide global. These run against a real server too: the point is that the
+// request goes through the caller's fetch and the global one is never touched.
+describe("jsonRpc with a fetch and signal supplied by the caller", () => {
+  const servers: Server[] = [];
+  const originalFetch = globalThis.fetch;
+
+  async function startServer(
+    handler: (req: IncomingMessage, res: ServerResponse) => void,
+  ): Promise<string> {
+    const server = createServer(handler);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return `http://127.0.0.1:${port}`;
+  }
+
+  function answering(result: unknown) {
+    return (_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+    };
+  }
+
+  beforeEach(() => {
+    // Any request that reaches the global fetch fails the test.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("the global fetch must not be called");
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+  });
+
+  it("sends the request through the fetch it was given", async () => {
+    const url = await startServer(answering(7));
+    const ownFetch = vi.fn<typeof fetch>((input, init) => originalFetch(input, init));
+
+    await expect(jsonRpc(url, "common", "version", [], { fetch: ownFetch })).resolves.toBe(7);
+
+    expect(ownFetch).toHaveBeenCalledTimes(1);
+    expect(ownFetch.mock.calls[0][0]).toBe(`${url}/jsonrpc`);
+    expect(ownFetch.mock.calls[0][1]).toMatchObject({ method: "POST", redirect: "manual" });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a redirect the given fetch returns", async () => {
+    const url = await startServer((_req, res) => {
+      res.writeHead(307, { Location: "http://169.254.169.254/jsonrpc" });
+      res.end();
+    });
+    const ownFetch: typeof fetch = (input, init) => originalFetch(input, init);
+
+    await expect(jsonRpc(url, "common", "version", [], { fetch: ownFetch })).rejects.toThrow(
+      "Odoo answered with a redirect (HTTP 307)",
+    );
+  });
+
+  it("hands the signal to fetch, so aborting it ends a request Odoo never answers", async () => {
+    // Accepts the connection and never answers: without the signal this call would hang.
+    const url = await startServer(() => {});
+    const controller = new AbortController();
+    const ownFetch: typeof fetch = (input, init) => originalFetch(input, init);
+
+    const call = jsonRpc(url, "common", "version", [], {
+      fetch: ownFetch,
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    const err = await call.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OdooError);
+    expect((err as OdooError).message).toMatch(/abort/i);
+  });
+
+  it("routes every OdooClient call through the client's fetch and signal", async () => {
+    const url = await startServer(answering(2));
+    const signal = new AbortController().signal;
+    const ownFetch = vi.fn<typeof fetch>((input, init) => originalFetch(input, init));
+
+    const uid = await OdooClient.authenticate({
+      url,
+      db: "db",
+      login: "admin",
+      apiKey: "key",
+      fetch: ownFetch,
+      signal,
+    });
+    const client = new OdooClient({ url, db: "db", uid, apiKey: "key", fetch: ownFetch, signal });
+    await client.searchCount("res.partner", []);
+
+    expect(ownFetch).toHaveBeenCalledTimes(2);
+    for (const [, init] of ownFetch.mock.calls) expect(init?.signal).toBe(signal);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
